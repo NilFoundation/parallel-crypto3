@@ -116,6 +116,8 @@ namespace nil {
     }            // namespace crypto3
 }    // namespace nil
 
+#define ZK_PLACEHOLDER_PROFILING_ENABLED
+
 #ifdef ZK_PLACEHOLDER_PROFILING_ENABLED
     #define PROFILE_PLACEHOLDER_SCOPE(name) \
         nil::crypto3::zk::snark::detail::placeholder_scoped_profiler profiler(name);

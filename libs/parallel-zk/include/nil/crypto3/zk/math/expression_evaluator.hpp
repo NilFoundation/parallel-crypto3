@@ -84,11 +84,31 @@ namespace nil {
             // Evaluates a given expression, running over the expression tree.
             template<typename VariableType>
             class expression_evaluator : public boost::static_visitor<typename VariableType::assignment_type> {
-            private:
-                using MultiplicationType = detail::multiplier<typename VariableType::assignment_type>;
-                mutable MultiplicationType multiplicator;
             public:
                 using ValueType = typename VariableType::assignment_type;
+
+            private:
+                using MultiplicationType = detail::multiplier<typename VariableType::assignment_type>;
+                MultiplicationType multiplicator;
+
+                // We will try to keep the values instead of descructing them for future uses.
+                std::vector<ValueType> unused_values_cache;
+                std::size_t poly_count = 0;
+
+                ValueType get_new_value_type() {
+                    if (unused_values_cache.size() == 0)
+                        return ValueType();
+                    ValueType result = std::move(unused_values_cache.back());
+                    unused_values_cache.resize(unused_values_cache.size() - 1);
+                    return std::move(result);
+                }
+                void free_value_type(ValueType&& v) {
+                    // Practice shows that storing > 2 values results to increase in RAM consumption.
+                    if (unused_values_cache.size() < 2)
+                        unused_values_cache.emplace_back(std::move(v));
+                }
+
+            public:
                 /*
                  * @param expr - the expression that will be evaluated.
                  *  @param get_var_value - A function which can return the value for a given variable.
@@ -100,12 +120,15 @@ namespace nil {
                         , get_var_value(get_var_value) {
                 }
 
-                ValueType evaluate() const {
+                // This function is not const any more, since it can change 'unused_values_cache'.
+                ValueType evaluate() {
                     return boost::apply_visitor(*this, expr.get_expr());
                 }
 
-                ValueType operator()(const math::term<VariableType>& term) const {
-                    ValueType result = term.get_coeff();
+                ValueType operator()(const math::term<VariableType>& term) {
+                    // Here we re-use a pre-allocated ValueType.
+                    ValueType result = get_new_value_type();
+                    result = term.get_coeff();
                     for (const VariableType& var : term.get_vars()) {
                         multiplicator.multiply(result, get_var_value(var));
                     }
@@ -113,26 +136,30 @@ namespace nil {
                 }
 
                 ValueType operator()(
-                        const math::pow_operation<VariableType>& pow) const {
-                    ValueType result = boost::apply_visitor(*this, pow.get_expr().get_expr());
-                    return result.pow(pow.get_power());
+                        const math::pow_operation<VariableType>& pow) {
+                    ValueType v = boost::apply_visitor(*this, pow.get_expr().get_expr());
+                    ValueType result = v.pow(pow.get_power());
+                    free_value_type(std::move(v));
+                    return result;
                 }
 
                 ValueType operator()(
-                        const math::binary_arithmetic_operation<VariableType>& op) const {
+                        const math::binary_arithmetic_operation<VariableType>& op) {
 
                     ValueType result = boost::apply_visitor(*this, op.get_expr_left().get_expr());
+                    ValueType right = boost::apply_visitor(*this, op.get_expr_right().get_expr());
                     switch (op.get_op()) {
                         case ArithmeticOperator::ADD:
-                            result += boost::apply_visitor(*this, op.get_expr_right().get_expr());
+                            result += right;
                             break;
                         case ArithmeticOperator::SUB:
-                            result -= boost::apply_visitor(*this, op.get_expr_right().get_expr());
+                            result -= right;
                             break;
                         case ArithmeticOperator::MULT:
-                            multiplicator.multiply(result, boost::apply_visitor(*this, op.get_expr_right().get_expr()));
+                            multiplicator.multiply(result, right);
                             break;
                     }
+                    free_value_type(std::move(right));
                     return result;
                 }
 

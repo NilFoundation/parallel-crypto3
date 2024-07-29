@@ -31,6 +31,7 @@
 #include <unordered_map>
 #include <iostream>
 #include <memory>
+#include <thread>
 
 #include <nil/crypto3/math/polynomial/polynomial.hpp>
 #include <nil/crypto3/math/polynomial/shift.hpp>
@@ -121,6 +122,43 @@ namespace nil {
                             }, ThreadPool::PoolLevel::HIGH);
                     }
 
+                    static inline std::vector<std::size_t> count_optimal_constraint_limits(
+                            const std::vector<std::uint32_t>& extended_domain_sizes,
+                            const std::vector<std::uint32_t>& degree_limits,
+                            const typename policy_type::constraint_system_type::gates_container_type& gates
+                        ) {
+                        std::vector<std::size_t> optimal_constraint_limits(extended_domain_sizes.size());
+                        math::expression_max_degree_visitor<variable_type> visitor;
+
+                        std::vector<std::size_t> gate_parts_constaint_counts(extended_domain_sizes.size());
+                        for (const auto& gate: gates) {
+                            for (std::size_t constraint_idx = 0; constraint_idx < gate.constraints.size(); ++constraint_idx) {
+                                const auto& constraint = gate.constraints[constraint_idx];
+                                
+                                // +1 stands for the selector multiplication.
+                                size_t constraint_degree = visitor.compute_max_degree(constraint) + 1;
+                                for (int i = extended_domain_sizes.size() - 1; i >= 0; --i) {
+                                    // Whatever the degree of term is, add it to the maximal degree expression.
+                                    if (degree_limits[i] >= constraint_degree || i == 0) {
+                                        gate_parts_constaint_counts[i]++;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        std::size_t core_count = std::thread::hardware_concurrency();
+                        // For each domain size try to have approximately 'core_count' expressions.
+                        // This is very approximate, but it's good enough.
+                        for (int i = 0; i < extended_domain_sizes.size(); ++i) {
+std::cout << "gate_parts_constaint_counts[i] = " << gate_parts_constaint_counts[i] << "core_count = " << core_count << std::endl;
+                            optimal_constraint_limits[i] = gate_parts_constaint_counts[i] / core_count;
+                            if (optimal_constraint_limits[i] == 0)
+                                optimal_constraint_limits[i] = 1;
+std::cout << "optimal_constraint_limits[i] = " << optimal_constraint_limits[i] << std::endl;
+                        }
+                        return optimal_constraint_limits;
+                    }
+
                     static inline std::array<polynomial_dfs_type, argument_size>
                         prove_eval(
                             const typename policy_type::constraint_system_type &constraint_system,
@@ -155,7 +193,8 @@ namespace nil {
                         std::vector<math::expression<polynomial_dfs_variable_type>> expressions(extended_domain_sizes.size());
 
                         // Only in parallel version we store the subexpressions of each expression and ignore the cache.
-                        std::vector<std::vector<math::expression<polynomial_dfs_variable_type>>> subexpressions(extended_domain_sizes.size());
+                        std::vector<std::vector<math::expression<polynomial_dfs_variable_type>>> subexpressions(
+                            extended_domain_sizes.size());
 
                         auto theta_acc = FieldType::value_type::one();
 
@@ -167,7 +206,12 @@ namespace nil {
 
                         math::expression_max_degree_visitor<variable_type> visitor;
 
-                        const auto& gates = constraint_system.gates();
+                        const typename policy_type::constraint_system_type::gates_container_type& gates = constraint_system.gates();
+
+                        const std::vector<std::size_t> constraint_limits = count_optimal_constraint_limits(
+                            extended_domain_sizes,
+                            degree_limits,
+                            gates);
 
                         for (const auto& gate: gates) {
                             std::vector<math::expression<polynomial_dfs_variable_type>> gate_results(extended_domain_sizes.size());
@@ -180,12 +224,6 @@ namespace nil {
                             std::vector<math::expression<polynomial_dfs_variable_type>> gate_parts(extended_domain_sizes.size());
                             std::vector<std::size_t> gate_parts_constaint_counts(extended_domain_sizes.size());
     
-
-                            // This parameter can be tuned based on the circuit and the number of cores of the server on which the proofs
-                            // are generated. On the current zkEVM circuit this value is optimal based on experiments.
-                            const std::size_t constraint_limit = 16;
-
-
                             auto selector = polynomial_dfs_variable_type(
                                 gate.selector_index, 0, false, polynomial_dfs_variable_type::column_type::selector);
 
@@ -203,15 +241,15 @@ namespace nil {
                                         gate_parts[i] += next_term;
                                         gate_parts_constaint_counts[i]++;
 
-                                        // If we already have constraint_limit constaints in the gate_parts[i], add it to the 'subexpressions'.
-                                        if (gate_parts_constaint_counts[i] == constraint_limit) {
+                                        // If we already have constraint_limit[i] constaints in the gate_parts[i],
+                                        // add it to the 'subexpressions'.
+                                        if (gate_parts_constaint_counts[i] == constraint_limits[i]) {
                                             subexpressions[i].push_back(gate_parts[i] * selector);
                                             gate_parts[i] = math::expression<polynomial_dfs_variable_type>();
                                             gate_parts_constaint_counts[i] = 0;
                                         }
                                         break;
                                     }
-                                     
                                 }
                             }
 
@@ -226,14 +264,17 @@ namespace nil {
                         std::array<polynomial_dfs_type, argument_size> F;
 
                         std::vector<polynomial_dfs_type> F_0_parts(extended_domain_sizes.size());
-                        parallel_for(0, extended_domain_sizes.size(),
-                                [&subexpressions, &extended_domain_sizes, &F_0_parts, &original_domain, &column_polynomials, &expressions](std::size_t i) {
+
+                        // We do not parallelize this loop to save some RAM.
+                        for (std::size_t i = 0; i < extended_domain_sizes.size(); ++i) {
                             std::unordered_map<polynomial_dfs_variable_type, polynomial_dfs_type> variable_values;
                             
                             build_variable_value_map(expressions[i], column_polynomials, original_domain,
                                 extended_domain_sizes[i], variable_values);
 
                             std::vector<polynomial_dfs_type> subvalues(subexpressions[i].size());
+std::cout << "We've got " << subexpressions[i].size() << " subexpressions." << std::endl;
+
                             parallel_for(0, subexpressions[i].size(),
                                 [&subexpressions, &variable_values, &extended_domain_sizes, &subvalues, i](std::size_t subexpression_index) {
                                 // Only in parallel version we store the subexpressions of each expression and ignore the cache,
@@ -248,7 +289,7 @@ namespace nil {
                             }, ThreadPool::PoolLevel::HIGH);
                             
                             F_0_parts[i] = polynomial_sum<FieldType>(std::move(subvalues));
-                        }, ThreadPool::PoolLevel::LASTPOOL);
+                        };
 
                         F[0] += polynomial_sum<FieldType>(std::move(F_0_parts));
                         F[0] *= mask_polynomial;
