@@ -206,6 +206,8 @@ namespace nil {
                                 [&variable_values, &extended_domain_sizes, &result, &expressions, i]
                                 (std::size_t begin, std::size_t end) {
                                     for (std::size_t j = begin; j < end; ++j) {
+                                        // Don't use cache here. In practice it's slower to maintain the cache
+                                        // than to re-compute the subexpression value when value type is field element.
                                         math::expression_evaluator<variable_type> evaluator(
                                             expressions[i], 
                                             [&assignments=variable_values, j]
