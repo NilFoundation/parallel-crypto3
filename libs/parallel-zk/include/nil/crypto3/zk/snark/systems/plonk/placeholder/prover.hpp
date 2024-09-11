@@ -40,12 +40,13 @@
 #include <nil/crypto3/zk/snark/arithmetization/plonk/constraint.hpp>
 #include <nil/crypto3/zk/snark/arithmetization/plonk/assignment.hpp>
 #include <nil/crypto3/zk/snark/systems/plonk/placeholder/detail/placeholder_policy.hpp>
-#include <nil/crypto3/zk/snark/systems/plonk/placeholder/detail/placeholder_scoped_profiler.hpp>
 #include <nil/crypto3/zk/snark/systems/plonk/placeholder/permutation_argument.hpp>
 #include <nil/crypto3/zk/snark/systems/plonk/placeholder/lookup_argument.hpp>
 #include <nil/crypto3/zk/snark/systems/plonk/placeholder/gates_argument.hpp>
 #include <nil/crypto3/zk/snark/systems/plonk/placeholder/params.hpp>
 #include <nil/crypto3/zk/snark/systems/plonk/placeholder/preprocessor.hpp>
+
+#include <nil/crypto3/bench/scoped_profiler.hpp>
 
 namespace nil {
     namespace crypto3 {
@@ -56,7 +57,7 @@ namespace nil {
                     static inline std::vector<math::polynomial<typename FieldType::value_type>>
                         split_polynomial(const math::polynomial<typename FieldType::value_type> &f,
                                          std::size_t max_degree) {
-                        PROFILE_PLACEHOLDER_SCOPE("split_polynomial_time");
+                        PROFILE_SCOPE("split_polynomial_time");
 
                         std::vector<math::polynomial<typename FieldType::value_type>> f_splitted;
 
@@ -122,7 +123,6 @@ namespace nil {
                             , _is_lookup_enabled(constraint_system.lookup_gates().size() > 0)
                             , _commitment_scheme(commitment_scheme)
                     {
-
                         // Initialize transcript.
                         transcript(preprocessed_public_data.common_data.vk.constraint_system_with_params_hash);
                         transcript(preprocessed_public_data.common_data.vk.fixed_values_commitment);
@@ -132,12 +132,15 @@ namespace nil {
                     }
 
                     placeholder_proof<FieldType, ParamsType> process() {
-                        PROFILE_PLACEHOLDER_SCOPE("Placeholder prover, total time");
+                        PROFILE_SCOPE("Placeholder prover, total time");
 
                         // 2. Commit witness columns and public_input columns
                         _commitment_scheme.append_to_batch(VARIABLE_VALUES_BATCH, _polynomial_table->witnesses());
                         _commitment_scheme.append_to_batch(VARIABLE_VALUES_BATCH, _polynomial_table->public_inputs());
-                        _proof.commitments[VARIABLE_VALUES_BATCH] = _commitment_scheme.commit(VARIABLE_VALUES_BATCH);
+                        {
+                            PROFILE_SCOPE("variable_values_precommit_time");
+                            _proof.commitments[VARIABLE_VALUES_BATCH] = _commitment_scheme.commit(VARIABLE_VALUES_BATCH);
+                        }
                         transcript(_proof.commitments[VARIABLE_VALUES_BATCH]);
 
                         // 4. permutation_argument
@@ -203,11 +206,10 @@ namespace nil {
 
                         // 8. Run evaluation proofs
                         _proof.eval_proof.challenge = transcript.template challenge<FieldType>();
-
                         generate_evaluation_points();
 
                         {
-                            PROFILE_PLACEHOLDER_SCOPE("commitment scheme proof eval time");
+                            PROFILE_SCOPE("commitment scheme proof eval time");
                             _proof.eval_proof.eval_proof = _commitment_scheme.proof_eval(transcript);
                         }
 
@@ -216,7 +218,7 @@ namespace nil {
 
                 private:
                     std::vector<polynomial_dfs_type> quotient_polynomial_split_dfs() {
-                        PROFILE_PLACEHOLDER_SCOPE("quotient_polynomial_split_dfs");
+                        PROFILE_SCOPE("quotient_polynomial_split_dfs");
 
                         // TODO: pass max_degree parameter placeholder
                         std::vector<polynomial_type> T_splitted = detail::split_polynomial<FieldType>(
@@ -260,7 +262,7 @@ namespace nil {
                     }
 
                     polynomial_type quotient_polynomial() {
-                        PROFILE_PLACEHOLDER_SCOPE("Quotient polynomial time");
+                        PROFILE_SCOPE("quotient_polynomial_time");
 
                         // 7.1. Get $\alpha_0, \dots, \alpha_8 \in \mathbb{F}$ from $hash(\text{transcript})$
                         std::array<typename FieldType::value_type, f_parts> alphas =
@@ -288,8 +290,8 @@ namespace nil {
                     }
 
                     typename placeholder_lookup_argument_prover<FieldType, commitment_scheme_type, ParamsType>::prover_lookup_result
-                        lookup_argument() {
-                        PROFILE_PLACEHOLDER_SCOPE("Lookup argument time");
+                    lookup_argument() {
+                        PROFILE_SCOPE("lookup_argument_time");
 
                         typename placeholder_lookup_argument_prover<
                             FieldType,
@@ -317,7 +319,7 @@ namespace nil {
                     }
 
                     commitment_type T_commit(const std::vector<polynomial_dfs_type>& T_splitted_dfs) {
-                        PROFILE_PLACEHOLDER_SCOPE("T_splitted precommit time");
+                        PROFILE_SCOPE("T_split_precommit_time");
                         _commitment_scheme.append_to_batch(QUOTIENT_BATCH, T_splitted_dfs);
                         return _commitment_scheme.commit(QUOTIENT_BATCH);
                     }
@@ -349,7 +351,7 @@ namespace nil {
                     }
 
                     void generate_evaluation_points() {
-                        PROFILE_PLACEHOLDER_SCOPE("Evaluation points generation time");
+                        PROFILE_SCOPE("evaluation_points_generated_time");
                         _omega = preprocessed_public_data.common_data.basic_domain->get_domain_element(1);
 
                         const std::size_t witness_columns = table_description.witness_columns;
@@ -380,8 +382,9 @@ namespace nil {
                         if( constraint_system.copy_constraints().size() > 0 )
                             _commitment_scheme.append_eval_point(PERMUTATION_BATCH, 0, _proof.eval_proof.challenge * _omega);
 
-                        if(_is_lookup_enabled){
-                            _commitment_scheme.append_eval_point(PERMUTATION_BATCH, preprocessed_public_data.common_data.permutation_parts , _proof.eval_proof.challenge * _omega);
+                        if(_is_lookup_enabled) {
+                            _commitment_scheme.append_eval_point(PERMUTATION_BATCH, preprocessed_public_data.common_data.permutation_parts,
+                                _proof.eval_proof.challenge * _omega);
                             _commitment_scheme.append_eval_point(LOOKUP_BATCH, _proof.eval_proof.challenge);
                             _commitment_scheme.append_eval_point(LOOKUP_BATCH, _proof.eval_proof.challenge * _omega);
                             _commitment_scheme.append_eval_point(LOOKUP_BATCH, _proof.eval_proof.challenge *
@@ -396,7 +399,7 @@ namespace nil {
                         std::size_t start_index = preprocessed_public_data.identity_polynomials.size() +
                             preprocessed_public_data.permutation_polynomials.size() + 2;
 
-                        for( i = 0; i < start_index; i++){
+                        for (i = 0; i < start_index; i++) {
                             _commitment_scheme.append_eval_point(FIXED_VALUES_BATCH, i, _proof.eval_proof.challenge);
                         }
 

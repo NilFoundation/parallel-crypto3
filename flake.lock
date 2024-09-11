@@ -9,11 +9,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1724160518,
-        "narHash": "sha256-ZuNrBrf9YhPZLugcK6ubHl6WwLlU1iYwDMAlIYrygg8=",
+        "lastModified": 1725857026,
+        "narHash": "sha256-HgTvktKMnL/2Kb5FLCuvCoILUTpx18kgy3xNs9zwQGk=",
         "ref": "refs/heads/master",
-        "rev": "e0df9de54db6e1cfe8f016aed6975aeb202820fb",
-        "revCount": 10449,
+        "rev": "e1ac7cec6c93d31f1b1b7358065d217f970e87b3",
+        "revCount": 10453,
         "submodules": true,
         "type": "git",
         "url": "https://github.com/NilFoundation/crypto3"
@@ -110,11 +110,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1724367182,
-        "narHash": "sha256-Fd8ng+XFOECRT/wg1tCW84C2R6AFUqg1hSx8661rTIg=",
+        "lastModified": 1726059076,
+        "narHash": "sha256-I8oBlj4jyPxEA822Lylqkkv2fH2zRyzzVHI8H3TTwTI=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "54f073276119c7f8523b94905f54da1e430df30b",
+        "rev": "83fdae672641854f5dc69a5c52cfc84f7f5a05b5",
         "type": "github"
       },
       "original": {
